@@ -30,6 +30,9 @@ func TestLocalPubSub(t *testing.T) {
 	// Receive the event.
 	event := <-ch
 
+	// Unsubscribe from the topic.
+	ps.Unsubscribe("test", evtStream, ch)
+
 	// Check the event.
 	assert.Equal(t, "test", event.Decoded.Topic)
 	assert.Equal(t, evtStream, event.Decoded.Stream)
