@@ -37,7 +37,8 @@ type LocalPubSub struct {
 	unsubscribe chan<- *subscription
 }
 
-type localPubSub struct {
+type localPubSubTopic struct {
+	topic       string
 	finish      chan<- struct{}
 	publish     chan<- *EventWrapper
 	subscribe   chan<- *subscription
@@ -45,7 +46,17 @@ type localPubSub struct {
 	subscribers int
 }
 
-type localSub struct {
+type localPubSubStream struct {
+	topic       string
+	stream      uuid.UUID
+	finish      chan<- struct{}
+	publish     chan<- *EventWrapper
+	subscribe   chan<- *subscription
+	unsubscribe chan<- *subscription
+	subscribers int
+}
+
+type localPubSubSubscription struct {
 	finish  chan<- struct{}
 	publish chan<- *EventWrapper
 }
@@ -64,15 +75,16 @@ func NewLocalPubSub() *LocalPubSub {
 	}
 }
 
-func newLocalPubSubTopic() *localPubSub {
+func newLocalPubSubTopic(topic string) *localPubSubTopic {
 	finish := make(chan struct{})
 	publish := make(chan *EventWrapper)
 	subscribe := make(chan *subscription)
 	unsubscribe := make(chan *subscription)
 
-	go runLocalPubSubTopic(finish, publish, subscribe, unsubscribe)
+	go runLocalPubSubTopic(topic, finish, publish, subscribe, unsubscribe)
 
-	return &localPubSub{
+	return &localPubSubTopic{
+		topic:       topic,
 		finish:      finish,
 		publish:     publish,
 		subscribe:   subscribe,
@@ -81,15 +93,17 @@ func newLocalPubSubTopic() *localPubSub {
 	}
 }
 
-func newLocalPubSubStream() *localPubSub {
+func newLocalPubSubStream(topic string, stream uuid.UUID) *localPubSubStream {
 	finish := make(chan struct{})
 	publish := make(chan *EventWrapper)
 	subscribe := make(chan *subscription)
 	unsubscribe := make(chan *subscription)
 
-	go runLocalPubSubStream(finish, publish, subscribe, unsubscribe)
+	go runLocalPubSubStream(topic, stream, finish, publish, subscribe, unsubscribe)
 
-	return &localPubSub{
+	return &localPubSubStream{
+		topic:       topic,
+		stream:      stream,
 		finish:      finish,
 		publish:     publish,
 		subscribe:   subscribe,
@@ -98,13 +112,13 @@ func newLocalPubSubStream() *localPubSub {
 	}
 }
 
-func newLocalSub(ch chan<- *EventWrapper) *localSub {
+func newLocalPubSubSubscription(ch chan<- *EventWrapper) *localPubSubSubscription {
 	finish := make(chan struct{})
 	publish := make(chan *EventWrapper)
 
-	go runLocalSub(ch, finish, publish)
+	go runLocalPubSubSubscription(ch, finish, publish)
 
-	return &localSub{
+	return &localPubSubSubscription{
 		finish:  finish,
 		publish: publish,
 	}
@@ -167,7 +181,7 @@ func runLocalPubSub(
 	subscribe <-chan *subscription,
 	unsubscribe <-chan *subscription,
 ) {
-	subscriptions := make(map[string]*localPubSub)
+	subscriptions := make(map[string]*localPubSubTopic)
 
 	for {
 		select {
@@ -178,7 +192,7 @@ func runLocalPubSub(
 		case sub := <-subscribe:
 			topic, ok := subscriptions[sub.topic]
 			if !ok {
-				topic = newLocalPubSubTopic()
+				topic = newLocalPubSubTopic(sub.topic)
 				subscriptions[sub.topic] = topic
 			}
 
@@ -197,12 +211,13 @@ func runLocalPubSub(
 }
 
 func runLocalPubSubTopic(
+	topic string,
 	finish <-chan struct{},
 	publish <-chan *EventWrapper,
 	subscribe <-chan *subscription,
 	unsubscribe <-chan *subscription,
 ) {
-	subscriptions := make(map[uuid.UUID]*localPubSub)
+	subscriptions := make(map[uuid.UUID]*localPubSubStream)
 
 	for {
 		select {
@@ -215,7 +230,7 @@ func runLocalPubSubTopic(
 		case sub := <-subscribe:
 			stream, ok := subscriptions[sub.stream]
 			if !ok {
-				stream = newLocalPubSubStream()
+				stream = newLocalPubSubStream(topic, sub.stream)
 				subscriptions[sub.stream] = stream
 			}
 
@@ -234,12 +249,14 @@ func runLocalPubSubTopic(
 }
 
 func runLocalPubSubStream(
+	topic string,
+	stream uuid.UUID,
 	finish <-chan struct{},
 	publish <-chan *EventWrapper,
 	subscribe <-chan *subscription,
 	unsubscribe <-chan *subscription,
 ) {
-	subscriptions := make(map[chan<- *EventWrapper]*localSub)
+	subscriptions := make(map[chan<- *EventWrapper]*localPubSubSubscription)
 
 	for {
 		select {
@@ -251,7 +268,8 @@ func runLocalPubSubStream(
 			}
 		case sub := <-subscribe:
 			if _, ok := subscriptions[sub.ch]; !ok {
-				subscriptions[sub.ch] = newLocalSub(sub.ch)
+				subscriptions[sub.ch] =
+					newLocalPubSubSubscription(sub.ch)
 			}
 		case sub := <-unsubscribe:
 			if subscription, ok := subscriptions[sub.ch]; ok {
@@ -262,7 +280,7 @@ func runLocalPubSubStream(
 	}
 }
 
-func runLocalSub(
+func runLocalPubSubSubscription(
 	ch chan<- *EventWrapper,
 	finish <-chan struct{},
 	publish <-chan *EventWrapper,
