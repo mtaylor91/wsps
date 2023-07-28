@@ -1,20 +1,20 @@
 package wsps
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"reflect"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 )
 
+// PubSubServer is a websocket-based pubsub server.
 type PubSubServer struct {
-	local *LocalPubSub
+	localPubSub *LocalPubSub
 }
 
+// PubSubEndpoint is a websocket-based pubsub endpoint.
 type PubSubEndpoint struct {
 	topic     string
 	server    *PubSubServer
@@ -22,34 +22,36 @@ type PubSubEndpoint struct {
 	upgrader  websocket.Upgrader
 }
 
-var ErrPrototypeIsPointer = fmt.Errorf(
-	"prototype must be a struct, not a pointer to a struct")
-
-func NewPubSubServer(local *LocalPubSub) *PubSubServer {
-	return &PubSubServer{local}
+// NewPubSubServer creates a new PubSubServer.
+func NewPubSubServer(localPubSub *LocalPubSub) *PubSubServer {
+	return &PubSubServer{localPubSub}
 }
 
+// Publish publishes a message to a topic.
 func (s *PubSubServer) Publish(topic string, stream uuid.UUID, message interface{}) {
-	s.local.Publish(topic, stream, message)
+	s.localPubSub.Publish(topic, stream, message)
 }
 
+// Subscribe subscribes to a topic.
 func (s *PubSubServer) Subscribe(
 	topic string,
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
 ) {
-	s.local.Subscribe(topic, stream, ch)
+	s.localPubSub.Subscribe(topic, stream, ch)
 }
 
+// Unsubscribe unsubscribes from a topic.
 func (s *PubSubServer) Unsubscribe(
 	topic string,
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
 ) {
-	s.local.Unsubscribe(topic, stream, ch)
+	s.localPubSub.Unsubscribe(topic, stream, ch)
 }
 
-func (s *PubSubServer) NewEndpoint(
+// NewPubSubEndpoint creates a new PubSubEndpoint.
+func (s *PubSubServer) NewPubSubEndpoint(
 	topic string,
 	prototype interface{},
 ) (*PubSubEndpoint, error) {
@@ -72,10 +74,12 @@ func (s *PubSubServer) NewEndpoint(
 	}, nil
 }
 
+// Publish publishes a message to a stream on the endpoint's topic
 func (e *PubSubEndpoint) Publish(stream uuid.UUID, message interface{}) {
 	e.server.Publish(e.topic, stream, message)
 }
 
+// Subscribe subscribes to a stream on the endpoint's topic
 func (e *PubSubEndpoint) Subscribe(
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
@@ -83,6 +87,7 @@ func (e *PubSubEndpoint) Subscribe(
 	e.server.Subscribe(e.topic, stream, ch)
 }
 
+// Unsubscribe unsubscribes from a stream on the endpoint's topic
 func (e *PubSubEndpoint) Unsubscribe(
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
@@ -90,84 +95,44 @@ func (e *PubSubEndpoint) Unsubscribe(
 	e.server.Unsubscribe(e.topic, stream, ch)
 }
 
+// Handler handles a websocket connection.
 func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
-	conn, err := e.upgrader.Upgrade(w, r, nil)
+	wsConn, err := e.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 
-	defer conn.Close()
+	defer wsConn.Close()
 
 	recv := make(chan *EventWrapper)
 	send := make(chan *EventWrapper)
 	errs := make(chan error)
 	finished := make(chan struct{})
 
-	go func() {
-		for {
-			select {
-			case evt := <-send:
-				if evt.Encoded != nil {
-					err := conn.WriteMessage(
-						websocket.TextMessage, evt.Encoded)
-					if err != nil {
-						errs <- err
-						return
-					}
-				} else {
-					err := conn.WriteJSON(evt.Decoded)
-					if err != nil {
-						errs <- err
-						return
-					}
-				}
-			case <-finished:
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			content := reflect.New(reflect.TypeOf(e.prototype))
-			event := Event{
-				Topic:   e.topic,
-				Content: &content,
-			}
-
-			_, msgReader, err := conn.NextReader()
-			if err != nil {
-				errs <- err
-				return
-			}
-
-			buf := bytes.Buffer{}
-			_, err = buf.ReadFrom(msgReader)
-			if err != nil {
-				errs <- err
-				return
-			}
-
-			data := buf.Bytes()
-			err = json.Unmarshal(data, &event)
-			if err != nil {
-				errs <- err
-				return
-			}
-
-			recv <- &EventWrapper{data, &event}
-		}
-	}()
+	go sendMessages(wsConn, send, finished, errs)
+	go readMessages(e.topic, e.prototype, wsConn, recv, errs)
 
 	for {
 		select {
 		case evt := <-recv:
 			if evt.Decoded.Subscribe {
+				logrus.WithFields(logrus.Fields{
+					"topic":  e.topic,
+					"stream": evt.Decoded.Stream,
+				}).Trace("Server received subscribe")
 				e.server.Subscribe(e.topic, evt.Decoded.Stream, send)
 			} else if evt.Decoded.Unsubscribe {
+				logrus.WithFields(logrus.Fields{
+					"topic":  e.topic,
+					"stream": evt.Decoded.Stream,
+				}).Trace("Server received unsubscribe")
 				e.server.Unsubscribe(e.topic, evt.Decoded.Stream, send)
 			} else {
-				e.server.local.publish <- evt
+				logrus.WithFields(logrus.Fields{
+					"topic":  e.topic,
+					"stream": evt.Decoded.Stream,
+				}).Trace("Server received message")
+				e.server.localPubSub.publish <- evt
 			}
 		case err := <-errs:
 			if err != nil {

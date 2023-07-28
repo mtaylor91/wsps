@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 )
 
 type subscription struct {
@@ -124,6 +125,11 @@ func (ps *LocalPubSub) Publish(
 	if err != nil {
 		return err
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"topic":  topic,
+		"stream": stream,
+	}).Trace("Publishing event")
 
 	ps.publish <- &EventWrapper{
 		Encoded: data,
@@ -255,6 +261,10 @@ func runLocalPubSubStream(
 			}
 		case sub := <-subscribe:
 			if _, ok := subscriptions[sub.ch]; !ok {
+				logrus.WithFields(logrus.Fields{
+					"topic":  topic,
+					"stream": stream,
+				}).Trace("Subscribing to event stream")
 				subscriptions[sub.ch] =
 					newLocalPubSubSubscription(topic, stream, sub.ch)
 			}
