@@ -79,7 +79,7 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 
 	// Authenticate.
 	if c.auth != nil {
-		if err := c.auth(wsConn); err != nil {
+		if err = c.auth(wsConn); err != nil {
 			return nil, err
 		}
 	}
@@ -89,8 +89,8 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 	go readMessages(topic, msgType, wsConn, recv, errs)
 	go runConnection(
 		ctx,
-		topic,
 		c.localPubSub,
+		topic,
 		recv,
 		send,
 		errs,
@@ -158,8 +158,8 @@ func (c *PubSubConnection) Shutdown() error {
 // runConnection runs a PubSubConnection.
 func runConnection(
 	ctx context.Context,
-	topic string,
 	localPubSub *LocalPubSub,
+	topic string,
 	recv <-chan *EventWrapper,
 	send chan<- *EventWrapper,
 	errs <-chan error,

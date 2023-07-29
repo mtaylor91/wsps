@@ -12,6 +12,12 @@ import (
 // AuthHandler is a function that handles authentication.
 type AuthHandler func(*websocket.Conn) error
 
+// Authentication is a function that authenticates a websocket connection.
+type Authentication func(*websocket.Conn) (interface{}, error)
+
+// Authorization is a function that authorizes a websocket event.
+type Authorization func(interface{}, *EventWrapper) bool
+
 // sendMessages sends messages to the websocket connection.
 func sendMessages(
 	ctx context.Context,

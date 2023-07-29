@@ -12,7 +12,9 @@ import (
 
 // PubSubServer is a websocket-based pubsub server.
 type PubSubServer struct {
-	localPubSub *LocalPubSub
+	authentication Authentication
+	authorization  Authorization
+	localPubSub    *LocalPubSub
 }
 
 // PubSubEndpoint is a websocket-based pubsub endpoint.
@@ -25,7 +27,7 @@ type PubSubEndpoint struct {
 
 // NewPubSubServer creates a new PubSubServer.
 func NewPubSubServer(localPubSub *LocalPubSub) *PubSubServer {
-	return &PubSubServer{localPubSub}
+	return &PubSubServer{nil, nil, localPubSub}
 }
 
 // Publish publishes a message to a topic.
@@ -49,6 +51,16 @@ func (s *PubSubServer) Unsubscribe(
 	ch chan<- *EventWrapper,
 ) {
 	s.localPubSub.Unsubscribe(topic, stream, ch)
+}
+
+// SetAuthenticator sets the authentication handler.
+func (s *PubSubServer) SetAuthentication(auth Authentication) {
+	s.authentication = auth
+}
+
+// SetAuthorization sets the authorization handler.
+func (s *PubSubServer) SetAuthorization(auth Authorization) {
+	s.authorization = auth
 }
 
 // NewPubSubEndpoint creates a new PubSubEndpoint.
@@ -101,6 +113,16 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authenticate the connection.
+	var session interface{}
+	if e.server.authentication != nil {
+		session, err = e.server.authentication(wsConn)
+		if err != nil {
+			wsConn.Close()
+			return
+		}
+	}
+
 	recv := make(chan *EventWrapper)
 	send := make(chan *EventWrapper)
 	errs := make(chan error)
@@ -113,6 +135,13 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case evt := <-recv:
+			// Authenticate the message.
+			if e.server.authorization != nil {
+				if !e.server.authorization(session, evt) {
+					continue
+				}
+			}
+
 			if evt.Decoded.Subscribe {
 				logrus.WithFields(logrus.Fields{
 					"topic":  e.topic,
