@@ -2,6 +2,7 @@ package wsps
 
 import (
 	"context"
+	"net/url"
 	"reflect"
 
 	"github.com/google/uuid"
@@ -71,8 +72,20 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 	// Create cancel context
 	ctx, cancel := context.WithCancel(ctx)
 
+	// Resolve websocket url
+	url, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	if url.Scheme == "http" {
+		url.Scheme = "ws"
+	} else if url.Scheme == "https" {
+		url.Scheme = "wss"
+	}
+
 	// Dial the endpoint.
-	wsConn, _, err := c.dialer.Dial(endpoint, nil)
+	wsConn, _, err := c.dialer.Dial(url.String(), nil)
 	if err != nil {
 		return nil, err
 	}

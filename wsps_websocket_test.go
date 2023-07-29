@@ -3,7 +3,6 @@ package wsps
 import (
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
@@ -32,22 +31,11 @@ func TestWebsocketPubSub(t *testing.T) {
 	httpServer := httptest.NewServer(http.HandlerFunc(pubSubEndpoint.Handler))
 	defer httpServer.Close()
 
-	url, err := url.Parse(httpServer.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if url.Scheme == "http" {
-		url.Scheme = "ws"
-	} else if url.Scheme == "https" {
-		url.Scheme = "wss"
-	}
-
 	// Create client
 	pubSubClient := NewPubSubClient(clientPubSub)
 	// Create client connection
 	pubSubConnection, err := pubSubClient.NewPubSubConnection(
-		url.String(), "test", TestMessage{})
+		httpServer.URL, "test", TestMessage{})
 	if err != nil {
 		t.Fatal(err)
 	}
