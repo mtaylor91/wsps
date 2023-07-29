@@ -171,19 +171,7 @@ func runConnection(
 			close(finished)
 			return
 		case evt := <-recv:
-			if evt.Decoded.Subscribe {
-				logrus.WithFields(logrus.Fields{
-					"topic":  topic,
-					"stream": evt.Decoded.Stream,
-				}).Trace("Client received subscribe")
-				localPubSub.Subscribe(topic, evt.Decoded.Stream, send)
-			} else if evt.Decoded.Unsubscribe {
-				logrus.WithFields(logrus.Fields{
-					"topic":  topic,
-					"stream": evt.Decoded.Stream,
-				}).Trace("Client received unsubscribe")
-				localPubSub.Unsubscribe(topic, evt.Decoded.Stream, send)
-			} else {
+			if evt.Decoded.Content != nil {
 				logrus.WithFields(logrus.Fields{
 					"topic":  topic,
 					"stream": evt.Decoded.Stream,
