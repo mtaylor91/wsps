@@ -270,6 +270,10 @@ func runLocalPubSubStream(
 			}
 		case sub := <-unsubscribe:
 			if subscription, ok := subscriptions[sub.ch]; ok {
+				logrus.WithFields(logrus.Fields{
+					"topic":  topic,
+					"stream": stream,
+				}).Trace("Unsubscribing from event stream")
 				subscription.finish <- struct{}{}
 				delete(subscriptions, sub.ch)
 			}

@@ -12,7 +12,7 @@ type Example struct {
 	Number int
 }
 
-func TestDecodeInterfaceRoundTripsType(t *testing.T) {
+func TestDecodeInterfaceType(t *testing.T) {
 	encode := Event{
 		Topic:  "test",
 		Stream: uuid.New(),

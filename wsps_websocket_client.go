@@ -1,15 +1,13 @@
 package wsps
 
 import (
+	"context"
 	"reflect"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
-
-// AuthHandler is a function that handles authentication.
-type AuthHandler func(*websocket.Conn) error
 
 // PubSubClient is a websocket-based pubsub client.
 type PubSubClient struct {
@@ -33,12 +31,12 @@ func (c *PubSubClient) SetAuthHandler(auth AuthHandler) {
 
 // PubSubConnection is a websocket-based pubsub connection.
 type PubSubConnection struct {
-	client    *PubSubClient
-	topic     string
-	prototype interface{}
-	sendEvent chan<- *EventWrapper
-	finished  <-chan error
-	shutdown  chan<- struct{}
+	topic    string
+	ctx      context.Context
+	cancel   context.CancelFunc
+	client   *PubSubClient
+	send     chan<- *EventWrapper
+	finished <-chan error
 }
 
 // NewConnection creates a new PubSubConnection.
@@ -46,9 +44,22 @@ func (c *PubSubClient) NewPubSubConnection(
 	endpoint, topic string,
 	prototype interface{},
 ) (*PubSubConnection, error) {
-	// Check prototype.
-	if reflect.TypeOf(prototype).Kind() == reflect.Ptr {
-		return nil, ErrPrototypeIsPointer
+	// Create context
+	ctx := context.Background()
+	return c.NewPubSubConnectionContext(ctx, endpoint, topic, prototype)
+}
+
+// NewConnection creates a new PubSubConnection.
+func (c *PubSubClient) NewPubSubConnectionContext(
+	ctx context.Context,
+	endpoint, topic string,
+	prototype interface{},
+) (*PubSubConnection, error) {
+	// Resolve content type
+	msgType := reflect.TypeOf(prototype)
+	if msgType.Kind() == reflect.Ptr {
+		// Resolve pointer type
+		msgType = msgType.Elem()
 	}
 
 	// Create channels.
@@ -56,7 +67,9 @@ func (c *PubSubClient) NewPubSubConnection(
 	send := make(chan *EventWrapper)
 	errs := make(chan error)
 	finished := make(chan error)
-	shutdown := make(chan struct{})
+
+	// Create cancel context
+	ctx, cancel := context.WithCancel(ctx)
 
 	// Dial the endpoint.
 	wsConn, _, err := c.dialer.Dial(endpoint, nil)
@@ -71,32 +84,45 @@ func (c *PubSubClient) NewPubSubConnection(
 		}
 	}
 
-	go sendMessages(wsConn, send, shutdown, errs)
-	go readMessages(topic, prototype, wsConn, recv, errs)
+	// Run the connection.
+	go sendMessages(ctx, wsConn, send, errs)
+	go readMessages(topic, msgType, wsConn, recv, errs)
 	go runConnection(
-		c.localPubSub,
+		ctx,
 		topic,
-		prototype,
-		wsConn,
+		c.localPubSub,
 		recv,
 		send,
 		errs,
 		finished,
-		shutdown,
 	)
 
+	// Return the connection.
 	return &PubSubConnection{
-		client:    c,
-		topic:     topic,
-		prototype: prototype,
-		sendEvent: send,
-		finished:  finished,
-		shutdown:  shutdown,
+		topic:    topic,
+		ctx:      ctx,
+		cancel:   cancel,
+		client:   c,
+		send:     send,
+		finished: finished,
 	}, nil
 }
 
+// Publish publishes a message to the connection's topic.
+func (c *PubSubConnection) Publish(streamId uuid.UUID, msg interface{}) {
+	// Wrap the message.
+	evt := &EventWrapper{Decoded: &Event{
+		Topic:   c.topic,
+		Stream:  streamId,
+		Content: msg,
+	}}
+
+	// Send the message.
+	c.send <- evt
+}
+
 // Subscribe subscribes to a stream on the connection's topic.
-func (c *PubSubConnection) Subscribe(stream uuid.UUID, ch chan<- *EventWrapper) error {
+func (c *PubSubConnection) Subscribe(stream uuid.UUID, ch chan<- *EventWrapper) {
 	c.client.localPubSub.Subscribe(c.topic, stream, ch)
 
 	// Send subscribe message.
@@ -106,37 +132,42 @@ func (c *PubSubConnection) Subscribe(stream uuid.UUID, ch chan<- *EventWrapper) 
 		Subscribe: true,
 	}}
 
-	select {
-	case err := <-c.finished:
-		return err
-	case c.sendEvent <- evt:
-		return nil
-	}
+	c.send <- evt
+}
+
+// Unsubscribe unsubscribes from a stream on the connection's topic.
+func (c *PubSubConnection) Unsubscribe(stream uuid.UUID, ch chan<- *EventWrapper) {
+	c.client.localPubSub.Unsubscribe(c.topic, stream, ch)
+
+	// Send unsubscribe message.
+	evt := &EventWrapper{Decoded: &Event{
+		Topic:       c.topic,
+		Stream:      stream,
+		Unsubscribe: true,
+	}}
+
+	c.send <- evt
 }
 
 // Shutdown shuts down a PubSubConnection.
 func (c *PubSubConnection) Shutdown() error {
-	close(c.shutdown)
+	c.cancel()
 	return <-c.finished
 }
 
 // runConnection runs a PubSubConnection.
 func runConnection(
-	localPubSub *LocalPubSub,
+	ctx context.Context,
 	topic string,
-	prototype interface{},
-	wsConn *websocket.Conn,
+	localPubSub *LocalPubSub,
 	recv <-chan *EventWrapper,
 	send chan<- *EventWrapper,
 	errs <-chan error,
 	finished chan<- error,
-	shutdown <-chan struct{},
 ) {
-	defer wsConn.Close()
-
 	for {
 		select {
-		case <-shutdown:
+		case <-ctx.Done():
 			close(finished)
 			return
 		case evt := <-recv:
@@ -160,7 +191,10 @@ func runConnection(
 				localPubSub.publish <- evt
 			}
 		case err := <-errs:
-			if err != nil {
+			if err != nil && !websocket.IsCloseError(err,
+				websocket.CloseNormalClosure, websocket.CloseGoingAway,
+			) {
+				logrus.WithError(err).Error("WebSocket client error")
 				finished <- err
 			}
 		}

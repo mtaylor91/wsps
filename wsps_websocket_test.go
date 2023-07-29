@@ -65,12 +65,18 @@ func TestWebsocketPubSub(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish a message to the event stream
-	pubSubServer.Publish("test", evtStream, TestMessage{
+	pubSubConnection.Publish(evtStream, TestMessage{
 		"Hello, world!",
 	})
 
 	// Receive the message
 	evt := <-ch
+
+	// Unsubscribe from the event stream
+	pubSubConnection.Unsubscribe(evtStream, ch)
+
+	// Wait for the unsubscription to be registered
+	time.Sleep(100 * time.Millisecond)
 
 	// Assert that the message is correct
 	assert.Equal(t, &TestMessage{"Hello, world!"}, evt.Decoded.Content)

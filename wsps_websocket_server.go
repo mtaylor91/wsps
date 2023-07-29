@@ -1,6 +1,7 @@
 package wsps
 
 import (
+	"context"
 	"net/http"
 	"reflect"
 
@@ -16,10 +17,10 @@ type PubSubServer struct {
 
 // PubSubEndpoint is a websocket-based pubsub endpoint.
 type PubSubEndpoint struct {
-	topic     string
-	server    *PubSubServer
-	prototype interface{}
-	upgrader  websocket.Upgrader
+	topic    string
+	server   *PubSubServer
+	msgType  reflect.Type
+	upgrader websocket.Upgrader
 }
 
 // NewPubSubServer creates a new PubSubServer.
@@ -55,18 +56,16 @@ func (s *PubSubServer) NewPubSubEndpoint(
 	topic string,
 	prototype interface{},
 ) (*PubSubEndpoint, error) {
-	// Ensure that the prototype is a struct, not a pointer to a struct.
-	// This is because we want to be able to create new instances of the
-	// prototype, and we can't do that if it's a pointer.
-	prototypeType := reflect.TypeOf(prototype)
-	if prototypeType.Kind() == reflect.Ptr {
-		return nil, ErrPrototypeIsPointer
+	// Resolve the type of the message.
+	msgType := reflect.TypeOf(prototype)
+	if msgType.Kind() == reflect.Ptr {
+		msgType = msgType.Elem()
 	}
 
 	return &PubSubEndpoint{
-		topic:     topic,
-		server:    s,
-		prototype: prototype,
+		topic:   topic,
+		server:  s,
+		msgType: msgType,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  16384,
 			WriteBufferSize: 16384,
@@ -102,15 +101,14 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer wsConn.Close()
-
 	recv := make(chan *EventWrapper)
 	send := make(chan *EventWrapper)
 	errs := make(chan error)
-	finished := make(chan struct{})
 
-	go sendMessages(wsConn, send, finished, errs)
-	go readMessages(e.topic, e.prototype, wsConn, recv, errs)
+	ctx, cancel := context.WithCancel(r.Context())
+
+	go sendMessages(ctx, wsConn, send, errs)
+	go readMessages(e.topic, e.msgType, wsConn, recv, errs)
 
 	for {
 		select {
@@ -135,8 +133,14 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 				e.server.localPubSub.publish <- evt
 			}
 		case err := <-errs:
-			if err != nil {
-				finished <- struct{}{}
+			if err != nil && !websocket.IsCloseError(err,
+				websocket.CloseGoingAway, websocket.CloseNormalClosure,
+			) {
+				logrus.WithError(err).Error("WebSocket error")
+				cancel()
+				return
+			} else if err != nil {
+				cancel()
 				return
 			}
 		}
