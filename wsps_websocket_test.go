@@ -69,6 +69,6 @@ func TestWebsocketPubSub(t *testing.T) {
 	// Assert that the message is correct
 	assert.Equal(t, &TestMessage{"Hello, world!"}, evt.Decoded.Content)
 
-	// Shutdown client
-	assert.NoError(t, pubSubConnection.Shutdown())
+	// Shut down client
+	assert.NoError(t, pubSubConnection.Close())
 }

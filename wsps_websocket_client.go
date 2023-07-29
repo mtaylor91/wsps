@@ -121,6 +121,12 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 	}, nil
 }
 
+// Close shuts down a PubSubConnection.
+func (c *PubSubConnection) Close() error {
+	c.cancel()
+	return <-c.finished
+}
+
 // Publish publishes a message to the connection's topic.
 func (c *PubSubConnection) Publish(streamId uuid.UUID, msg interface{}) {
 	// Wrap the message.
@@ -160,12 +166,6 @@ func (c *PubSubConnection) Unsubscribe(stream uuid.UUID, ch chan<- *EventWrapper
 	}}
 
 	c.send <- evt
-}
-
-// Shutdown shuts down a PubSubConnection.
-func (c *PubSubConnection) Shutdown() error {
-	c.cancel()
-	return <-c.finished
 }
 
 // runConnection runs a PubSubConnection.
