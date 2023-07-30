@@ -148,11 +148,13 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 					"stream": evt.Decoded.Stream,
 				}).Trace("Server received subscribe")
 				e.server.Subscribe(e.topic, evt.Decoded.Stream, send)
+				send <- evt
 			} else if evt.Decoded.Unsubscribe {
 				logrus.WithFields(logrus.Fields{
 					"topic":  e.topic,
 					"stream": evt.Decoded.Stream,
 				}).Trace("Server received unsubscribe")
+				send <- evt
 				e.server.Unsubscribe(e.topic, evt.Decoded.Stream, send)
 			} else {
 				logrus.WithFields(logrus.Fields{

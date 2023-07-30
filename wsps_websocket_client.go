@@ -32,12 +32,14 @@ func (c *PubSubClient) SetAuthHandler(auth AuthHandler) {
 
 // PubSubConnection is a websocket-based pubsub connection.
 type PubSubConnection struct {
-	topic    string
-	ctx      context.Context
-	cancel   context.CancelFunc
-	client   *PubSubClient
-	send     chan<- *EventWrapper
-	finished <-chan error
+	topic       string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	client      *PubSubClient
+	publish     chan<- *EventWrapper
+	subscribe   chan<- *subscription
+	unsubscribe chan<- *subscription
+	finished    <-chan error
 }
 
 // NewConnection creates a new PubSubConnection.
@@ -66,6 +68,8 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 	// Create channels.
 	recv := make(chan *EventWrapper)
 	send := make(chan *EventWrapper)
+	subscribe := make(chan *subscription)
+	unsubscribe := make(chan *subscription)
 	errs := make(chan error)
 	finished := make(chan error)
 
@@ -106,18 +110,22 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 		topic,
 		recv,
 		send,
+		subscribe,
+		unsubscribe,
 		errs,
 		finished,
 	)
 
 	// Return the connection.
 	return &PubSubConnection{
-		topic:    topic,
-		ctx:      ctx,
-		cancel:   cancel,
-		client:   c,
-		send:     send,
-		finished: finished,
+		topic:       topic,
+		ctx:         ctx,
+		cancel:      cancel,
+		client:      c,
+		publish:     send,
+		subscribe:   subscribe,
+		unsubscribe: unsubscribe,
+		finished:    finished,
 	}, nil
 }
 
@@ -129,43 +137,28 @@ func (c *PubSubConnection) Close() error {
 
 // Publish publishes a message to the connection's topic.
 func (c *PubSubConnection) Publish(streamId uuid.UUID, msg interface{}) {
-	// Wrap the message.
-	evt := &EventWrapper{Decoded: &Event{
+	// Send the message.
+	c.publish <- &EventWrapper{Decoded: &Event{
 		Topic:   c.topic,
 		Stream:  streamId,
 		Content: msg,
 	}}
-
-	// Send the message.
-	c.send <- evt
 }
 
 // Subscribe subscribes to a stream on the connection's topic.
 func (c *PubSubConnection) Subscribe(stream uuid.UUID, ch chan<- *EventWrapper) {
+	ack := make(chan *EventWrapper)
+	c.subscribe <- &subscription{c.topic, stream, ack}
+	<-ack
 	c.client.localPubSub.Subscribe(c.topic, stream, ch)
-
-	// Send subscribe message.
-	evt := &EventWrapper{Decoded: &Event{
-		Topic:     c.topic,
-		Stream:    stream,
-		Subscribe: true,
-	}}
-
-	c.send <- evt
 }
 
 // Unsubscribe unsubscribes from a stream on the connection's topic.
 func (c *PubSubConnection) Unsubscribe(stream uuid.UUID, ch chan<- *EventWrapper) {
+	ack := make(chan *EventWrapper)
+	c.unsubscribe <- &subscription{c.topic, stream, ack}
+	<-ack
 	c.client.localPubSub.Unsubscribe(c.topic, stream, ch)
-
-	// Send unsubscribe message.
-	evt := &EventWrapper{Decoded: &Event{
-		Topic:       c.topic,
-		Stream:      stream,
-		Unsubscribe: true,
-	}}
-
-	c.send <- evt
 }
 
 // runConnection runs a PubSubConnection.
@@ -175,22 +168,66 @@ func runConnection(
 	topic string,
 	recv <-chan *EventWrapper,
 	send chan<- *EventWrapper,
+	subscribe <-chan *subscription,
+	unsubscribe <-chan *subscription,
 	errs <-chan error,
 	finished chan<- error,
 ) {
+	pendingSubscriptions := make(map[uuid.UUID][]*subscription)
+	pendingUnsubscriptions := make(map[uuid.UUID][]*subscription)
+
 	for {
 		select {
 		case <-ctx.Done():
 			close(finished)
 			return
 		case evt := <-recv:
-			if evt.Decoded.Content != nil {
+			if evt.Decoded.Subscribe {
+				subs := pendingSubscriptions[evt.Decoded.Stream]
+				// Resolve pending subscriptions.
+				for _, sub := range subs {
+					sub.ch <- evt
+				}
+				delete(pendingSubscriptions, evt.Decoded.Stream)
+			} else if evt.Decoded.Unsubscribe {
+				subs := pendingUnsubscriptions[evt.Decoded.Stream]
+				// Resolve pending unsubscriptions.
+				for _, sub := range subs {
+					sub.ch <- evt
+				}
+				delete(pendingUnsubscriptions, evt.Decoded.Stream)
+			} else {
 				logrus.WithFields(logrus.Fields{
 					"topic":  topic,
 					"stream": evt.Decoded.Stream,
 				}).Trace("Client received message")
+				// Publish the message.
 				localPubSub.publish <- evt
 			}
+		case sub := <-subscribe:
+			logrus.WithFields(logrus.Fields{
+				"topic":  topic,
+				"stream": sub.stream,
+			}).Trace("Client subscription request")
+			subs := pendingSubscriptions[sub.stream]
+			pendingSubscriptions[sub.stream] = append(subs, sub)
+			send <- &EventWrapper{Decoded: &Event{
+				Topic:     topic,
+				Stream:    sub.stream,
+				Subscribe: true,
+			}}
+		case sub := <-unsubscribe:
+			logrus.WithFields(logrus.Fields{
+				"topic":  topic,
+				"stream": sub.stream,
+			}).Trace("Client unsubscription request")
+			subs := pendingUnsubscriptions[sub.stream]
+			pendingUnsubscriptions[sub.stream] = append(subs, sub)
+			send <- &EventWrapper{Decoded: &Event{
+				Topic:       topic,
+				Stream:      sub.stream,
+				Unsubscribe: true,
+			}}
 		case err := <-errs:
 			if err != nil && !websocket.IsCloseError(err,
 				websocket.CloseNormalClosure, websocket.CloseGoingAway,

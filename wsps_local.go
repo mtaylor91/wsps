@@ -7,12 +7,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type subscription struct {
-	topic  string
-	stream uuid.UUID
-	ch     chan<- *EventWrapper
-}
-
 type LocalPubSub struct {
 	publish     chan<- *EventWrapper
 	subscribe   chan<- *subscription
@@ -43,6 +37,12 @@ type localPubSubSubscription struct {
 	publish chan<- *EventWrapper
 }
 
+type subscription struct {
+	topic  string
+	stream uuid.UUID
+	ch     chan<- *EventWrapper
+}
+
 func NewLocalPubSub() *LocalPubSub {
 	publish := make(chan *EventWrapper)
 	subscribe := make(chan *subscription)
@@ -55,6 +55,34 @@ func NewLocalPubSub() *LocalPubSub {
 		subscribe:   subscribe,
 		unsubscribe: unsubscribe,
 	}
+}
+
+func (ps *LocalPubSub) Subscribe(
+	topic string,
+	stream uuid.UUID,
+	ch chan<- *EventWrapper,
+) error {
+	ps.subscribe <- &subscription{
+		topic:  topic,
+		stream: stream,
+		ch:     ch,
+	}
+
+	return nil
+}
+
+func (ps *LocalPubSub) Unsubscribe(
+	topic string,
+	stream uuid.UUID,
+	ch chan<- *EventWrapper,
+) error {
+	ps.unsubscribe <- &subscription{
+		topic:  topic,
+		stream: stream,
+		ch:     ch,
+	}
+
+	return nil
 }
 
 func newLocalPubSubTopic(topic string) *localPubSubTopic {
@@ -134,34 +162,6 @@ func (ps *LocalPubSub) Publish(
 	ps.publish <- &EventWrapper{
 		Encoded: data,
 		Decoded: evt,
-	}
-
-	return nil
-}
-
-func (ps *LocalPubSub) Subscribe(
-	topic string,
-	stream uuid.UUID,
-	ch chan<- *EventWrapper,
-) error {
-	ps.subscribe <- &subscription{
-		topic:  topic,
-		stream: stream,
-		ch:     ch,
-	}
-
-	return nil
-}
-
-func (ps *LocalPubSub) Unsubscribe(
-	topic string,
-	stream uuid.UUID,
-	ch chan<- *EventWrapper,
-) error {
-	ps.unsubscribe <- &subscription{
-		topic:  topic,
-		stream: stream,
-		ch:     ch,
 	}
 
 	return nil
