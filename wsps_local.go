@@ -43,6 +43,12 @@ type subscription struct {
 	ch     chan<- *EventWrapper
 }
 
+type subs map[chan<- *EventWrapper]*localPubSubSubscription
+
+type streamSubs map[uuid.UUID]subs
+
+type topicSubs map[string]streamSubs
+
 func NewLocalPubSub() *LocalPubSub {
 	publish := make(chan *EventWrapper)
 	subscribe := make(chan *subscription)
@@ -83,43 +89,6 @@ func (ps *LocalPubSub) Unsubscribe(
 	}
 
 	return nil
-}
-
-func newLocalPubSubTopic(topic string) *localPubSubTopic {
-	finish := make(chan struct{})
-	publish := make(chan *EventWrapper)
-	subscribe := make(chan *subscription)
-	unsubscribe := make(chan *subscription)
-
-	go runLocalPubSubTopic(topic, finish, publish, subscribe, unsubscribe)
-
-	return &localPubSubTopic{
-		topic:       topic,
-		finish:      finish,
-		publish:     publish,
-		subscribe:   subscribe,
-		unsubscribe: unsubscribe,
-		subscribers: 0,
-	}
-}
-
-func newLocalPubSubStream(topic string, stream uuid.UUID) *localPubSubStream {
-	finish := make(chan struct{})
-	publish := make(chan *EventWrapper)
-	subscribe := make(chan *subscription)
-	unsubscribe := make(chan *subscription)
-
-	go runLocalPubSubStream(topic, stream, finish, publish, subscribe, unsubscribe)
-
-	return &localPubSubStream{
-		topic:       topic,
-		stream:      stream,
-		finish:      finish,
-		publish:     publish,
-		subscribe:   subscribe,
-		unsubscribe: unsubscribe,
-		subscribers: 0,
-	}
 }
 
 func newLocalPubSubSubscription(
@@ -172,110 +141,58 @@ func runLocalPubSub(
 	subscribe <-chan *subscription,
 	unsubscribe <-chan *subscription,
 ) {
-	subscriptions := make(map[string]*localPubSubTopic)
+	topicSubs := make(topicSubs)
 
 	for {
 		select {
 		case evt := <-publish:
-			if topic, ok := subscriptions[evt.Decoded.Topic]; ok {
-				topic.publish <- evt
-			}
-		case sub := <-subscribe:
-			topic, ok := subscriptions[sub.topic]
+			topic, ok := topicSubs[evt.Decoded.Topic]
 			if !ok {
-				topic = newLocalPubSubTopic(sub.topic)
-				subscriptions[sub.topic] = topic
+				continue
 			}
 
-			topic.subscribe <- sub
-			topic.subscribers++
-		case sub := <-unsubscribe:
-			if topic, ok := subscriptions[sub.topic]; ok {
-				topic.unsubscribe <- sub
-				topic.subscribers--
-				if topic.subscribers == 0 {
-					topic.finish <- struct{}{}
-					delete(subscriptions, sub.topic)
-				}
-			}
-		}
-	}
-}
-
-func runLocalPubSubTopic(
-	topic string,
-	finish <-chan struct{},
-	publish <-chan *EventWrapper,
-	subscribe <-chan *subscription,
-	unsubscribe <-chan *subscription,
-) {
-	subscriptions := make(map[uuid.UUID]*localPubSubStream)
-
-	for {
-		select {
-		case <-finish:
-			return
-		case evt := <-publish:
-			if stream, ok := subscriptions[evt.Decoded.Stream]; ok {
-				stream.publish <- evt
-			}
-		case sub := <-subscribe:
-			stream, ok := subscriptions[sub.stream]
+			stream, ok := topic[evt.Decoded.Stream]
 			if !ok {
-				stream = newLocalPubSubStream(topic, sub.stream)
-				subscriptions[sub.stream] = stream
+				continue
 			}
 
-			stream.subscribe <- sub
-			stream.subscribers++
-		case sub := <-unsubscribe:
-			if stream, ok := subscriptions[sub.stream]; ok {
-				stream.unsubscribe <- sub
-				stream.subscribers--
-				if stream.subscribers == 0 {
-					stream.finish <- struct{}{}
-					delete(subscriptions, sub.stream)
-				}
-			}
-		}
-	}
-}
-
-func runLocalPubSubStream(
-	topic string,
-	stream uuid.UUID,
-	finish <-chan struct{},
-	publish <-chan *EventWrapper,
-	subscribe <-chan *subscription,
-	unsubscribe <-chan *subscription,
-) {
-	subscriptions := make(map[chan<- *EventWrapper]*localPubSubSubscription)
-
-	for {
-		select {
-		case <-finish:
-			return
-		case evt := <-publish:
-			for _, sub := range subscriptions {
+			for _, sub := range stream {
 				sub.publish <- evt
 			}
 		case sub := <-subscribe:
-			if _, ok := subscriptions[sub.ch]; !ok {
-				logrus.WithFields(logrus.Fields{
-					"topic":  topic,
-					"stream": stream,
-				}).Trace("Subscribing to event stream")
-				subscriptions[sub.ch] =
-					newLocalPubSubSubscription(topic, stream, sub.ch)
+			topic, ok := topicSubs[sub.topic]
+			if !ok {
+				topic = make(streamSubs)
+				topicSubs[sub.topic] = topic
+			}
+
+			stream, ok := topic[sub.stream]
+			if !ok {
+				stream = make(subs)
+				topic[sub.stream] = stream
+			}
+
+			if _, ok := stream[sub.ch]; !ok {
+				stream[sub.ch] = newLocalPubSubSubscription(
+					sub.topic,
+					sub.stream,
+					sub.ch,
+				)
 			}
 		case sub := <-unsubscribe:
-			if subscription, ok := subscriptions[sub.ch]; ok {
-				logrus.WithFields(logrus.Fields{
-					"topic":  topic,
-					"stream": stream,
-				}).Trace("Unsubscribing from event stream")
-				subscription.finish <- struct{}{}
-				delete(subscriptions, sub.ch)
+			topic, ok := topicSubs[sub.topic]
+			if !ok {
+				continue
+			}
+
+			stream, ok := topic[sub.stream]
+			if !ok {
+				continue
+			}
+
+			if s, ok := stream[sub.ch]; ok {
+				close(s.finish)
+				delete(stream, sub.ch)
 			}
 		}
 	}
