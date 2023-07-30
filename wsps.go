@@ -16,9 +16,3 @@ type EventWrapper struct {
 	Encoded []byte
 	Decoded *Event
 }
-
-type PubSub interface {
-	Publish(topic string, stream uuid.UUID, content interface{}) error
-	Subscribe(topic string, stream uuid.UUID, ch chan<- *EventWrapper) error
-	Unsubscribe(topic string, stream uuid.UUID, ch chan<- *EventWrapper) error
-}

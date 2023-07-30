@@ -32,22 +32,22 @@ func (s *PubSubServer) Publish(topic string, stream uuid.UUID, message interface
 	s.localPubSub.Publish(topic, stream, message)
 }
 
-// Subscribe subscribes to a topic.
-func (s *PubSubServer) Subscribe(
+// SubscribeChannel subscribes to a topic.
+func (s *PubSubServer) SubscribeChannel(
 	topic string,
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
 ) {
-	s.localPubSub.Subscribe(topic, stream, ch)
+	s.localPubSub.SubscribeChannel(topic, stream, ch)
 }
 
-// Unsubscribe unsubscribes from a topic.
-func (s *PubSubServer) Unsubscribe(
+// UnsubscribeChannel unsubscribes from a topic.
+func (s *PubSubServer) UnsubscribeChannel(
 	topic string,
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
 ) {
-	s.localPubSub.Unsubscribe(topic, stream, ch)
+	s.localPubSub.UnsubscribeChannel(topic, stream, ch)
 }
 
 // SetAuthenticator sets the authentication handler.
@@ -105,20 +105,20 @@ func (e *PubSubEndpoint) Publish(stream uuid.UUID, message interface{}) {
 	e.server.Publish(e.topic, stream, message)
 }
 
-// Subscribe subscribes to a stream on the endpoint's topic
-func (e *PubSubEndpoint) Subscribe(
+// SubscribeChannel subscribes to a stream on the endpoint's topic
+func (e *PubSubEndpoint) SubscribeChannel(
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
 ) {
-	e.server.Subscribe(e.topic, stream, ch)
+	e.server.SubscribeChannel(e.topic, stream, ch)
 }
 
-// Unsubscribe unsubscribes from a stream on the endpoint's topic
-func (e *PubSubEndpoint) Unsubscribe(
+// UnsubscribeChannel unsubscribes from a stream on the endpoint's topic
+func (e *PubSubEndpoint) UnsubscribeChannel(
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
 ) {
-	e.server.Unsubscribe(e.topic, stream, ch)
+	e.server.UnsubscribeChannel(e.topic, stream, ch)
 }
 
 // Handler handles a websocket connection.
@@ -162,7 +162,8 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 					"topic":  e.topic,
 					"stream": evt.Decoded.Stream,
 				}).Trace("Server received subscribe")
-				e.server.Subscribe(e.topic, evt.Decoded.Stream, send)
+				e.server.SubscribeChannel(
+					e.topic, evt.Decoded.Stream, send)
 				send <- evt
 				if e.server.onSubscribe != nil {
 					e.server.onSubscribe(
@@ -173,7 +174,8 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 					"topic":  e.topic,
 					"stream": evt.Decoded.Stream,
 				}).Trace("Server received unsubscribe")
-				e.server.Unsubscribe(e.topic, evt.Decoded.Stream, send)
+				e.server.UnsubscribeChannel(
+					e.topic, evt.Decoded.Stream, send)
 				send <- evt
 				if e.server.onUnsubscribe != nil {
 					e.server.onUnsubscribe(

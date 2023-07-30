@@ -63,7 +63,7 @@ func NewLocalPubSub() *LocalPubSub {
 	}
 }
 
-func (ps *LocalPubSub) Subscribe(
+func (ps *LocalPubSub) SubscribeChannel(
 	topic string,
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,
@@ -77,7 +77,7 @@ func (ps *LocalPubSub) Subscribe(
 	return nil
 }
 
-func (ps *LocalPubSub) Unsubscribe(
+func (ps *LocalPubSub) UnsubscribeChannel(
 	topic string,
 	stream uuid.UUID,
 	ch chan<- *EventWrapper,

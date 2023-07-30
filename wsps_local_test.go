@@ -22,7 +22,7 @@ func TestLocalPubSub(t *testing.T) {
 	evtStream := uuid.New()
 
 	// Subscribe to a topic.
-	ps.Subscribe("test", evtStream, ch)
+	ps.SubscribeChannel("test", evtStream, ch)
 
 	// Publish an event.
 	ps.Publish("test", evtStream, TestMessage{Message: "Hello World!"})
@@ -31,7 +31,7 @@ func TestLocalPubSub(t *testing.T) {
 	event := <-ch
 
 	// Unsubscribe from the topic.
-	ps.Unsubscribe("test", evtStream, ch)
+	ps.UnsubscribeChannel("test", evtStream, ch)
 
 	// Check the event.
 	assert.Equal(t, "test", event.Decoded.Topic)

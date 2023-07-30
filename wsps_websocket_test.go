@@ -42,7 +42,7 @@ func TestWebsocketPubSub(t *testing.T) {
 	ch := make(chan *EventWrapper)
 
 	// Subscribe to the event stream
-	pubSubConnection.Subscribe(evtStream, ch)
+	pubSubConnection.SubscribeChannel(evtStream, ch)
 
 	// Publish a message to the event stream
 	pubSubEndpoint.Publish(evtStream, TestMessage{
@@ -53,7 +53,7 @@ func TestWebsocketPubSub(t *testing.T) {
 	evt := <-ch
 
 	// Unsubscribe from the event stream
-	pubSubConnection.Unsubscribe(evtStream, ch)
+	pubSubConnection.UnsubscribeChannel(evtStream, ch)
 
 	// Assert that the message is correct
 	assert.Equal(t, &TestMessage{"Hello, world!"}, evt.Decoded.Content)
@@ -107,7 +107,7 @@ func benchmarkWebsocketPubSub(b *testing.B, clients, messages int) {
 			ch := make(chan *EventWrapper)
 
 			// Subscribe to the event stream
-			pubSubConnection.Subscribe(evtStream, ch)
+			pubSubConnection.SubscribeChannel(evtStream, ch)
 
 			// Signal that the client is ready
 			clientReady[i] <- struct{}{}
@@ -118,7 +118,7 @@ func benchmarkWebsocketPubSub(b *testing.B, clients, messages int) {
 			}
 
 			// Unsubscribe from the event stream
-			pubSubConnection.Unsubscribe(evtStream, ch)
+			pubSubConnection.UnsubscribeChannel(evtStream, ch)
 
 			// Signal that the client is done
 			clientFinished[i] <- struct{}{}

@@ -146,19 +146,31 @@ func (c *PubSubConnection) Publish(streamId uuid.UUID, msg interface{}) {
 }
 
 // Subscribe subscribes to a stream on the connection's topic.
-func (c *PubSubConnection) Subscribe(stream uuid.UUID, ch chan<- *EventWrapper) {
+func (c *PubSubConnection) Subscribe(stream uuid.UUID) {
 	ack := make(chan *EventWrapper)
 	c.subscribe <- &subscription{c.topic, stream, ack}
 	<-ack
-	c.client.localPubSub.Subscribe(c.topic, stream, ch)
+}
+
+// SubscribeChannel subscribes to a stream on the connection's topic.
+func (c *PubSubConnection) SubscribeChannel(stream uuid.UUID, ch chan<- *EventWrapper) {
+	c.Subscribe(stream)
+	c.client.localPubSub.SubscribeChannel(c.topic, stream, ch)
 }
 
 // Unsubscribe unsubscribes from a stream on the connection's topic.
-func (c *PubSubConnection) Unsubscribe(stream uuid.UUID, ch chan<- *EventWrapper) {
+func (c *PubSubConnection) Unsubscribe(stream uuid.UUID) {
 	ack := make(chan *EventWrapper)
 	c.unsubscribe <- &subscription{c.topic, stream, ack}
 	<-ack
-	c.client.localPubSub.Unsubscribe(c.topic, stream, ch)
+}
+
+// UnsubscribeChannel unsubscribes from a stream on the connection's topic.
+func (c *PubSubConnection) UnsubscribeChannel(
+	stream uuid.UUID, ch chan<- *EventWrapper,
+) {
+	c.Unsubscribe(stream)
+	c.client.localPubSub.UnsubscribeChannel(c.topic, stream, ch)
 }
 
 // runConnection runs a PubSubConnection.
