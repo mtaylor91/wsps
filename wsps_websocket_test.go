@@ -143,5 +143,5 @@ func benchmarkWebsocketPubSub(b *testing.B, clients, messages int) {
 }
 
 func BenchmarkWebsocketPubSub10000(b *testing.B) {
-	benchmarkWebsocketPubSub(b, b.N, 1000)
+	benchmarkWebsocketPubSub(b, b.N, 100)
 }

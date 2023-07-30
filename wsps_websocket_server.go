@@ -10,24 +10,21 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type OnSubscribe func(topic string, stream uuid.UUID)
+type OnUnsubscribe func(topic string, stream uuid.UUID)
+
 // PubSubServer is a websocket-based pubsub server.
 type PubSubServer struct {
 	authentication Authentication
 	authorization  Authorization
 	localPubSub    *LocalPubSub
-}
-
-// PubSubEndpoint is a websocket-based pubsub endpoint.
-type PubSubEndpoint struct {
-	topic    string
-	server   *PubSubServer
-	msgType  reflect.Type
-	upgrader websocket.Upgrader
+	onSubscribe    OnSubscribe
+	onUnsubscribe  OnUnsubscribe
 }
 
 // NewPubSubServer creates a new PubSubServer.
 func NewPubSubServer(localPubSub *LocalPubSub) *PubSubServer {
-	return &PubSubServer{nil, nil, localPubSub}
+	return &PubSubServer{localPubSub: localPubSub}
 }
 
 // Publish publishes a message to a topic.
@@ -61,6 +58,24 @@ func (s *PubSubServer) SetAuthentication(auth Authentication) {
 // SetAuthorization sets the authorization handler.
 func (s *PubSubServer) SetAuthorization(auth Authorization) {
 	s.authorization = auth
+}
+
+// SetOnSubscribe sets the onSubscribe handler.
+func (s *PubSubServer) SetOnSubscribe(onSubscribe OnSubscribe) {
+	s.onSubscribe = onSubscribe
+}
+
+// SetOnUnsubscribe sets the onUnsubscribe handler.
+func (s *PubSubServer) SetOnUnsubscribe(onUnsubscribe OnUnsubscribe) {
+	s.onUnsubscribe = onUnsubscribe
+}
+
+// PubSubEndpoint is a websocket-based pubsub endpoint.
+type PubSubEndpoint struct {
+	topic    string
+	server   *PubSubServer
+	msgType  reflect.Type
+	upgrader websocket.Upgrader
 }
 
 // NewPubSubEndpoint creates a new PubSubEndpoint.
@@ -149,13 +164,21 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 				}).Trace("Server received subscribe")
 				e.server.Subscribe(e.topic, evt.Decoded.Stream, send)
 				send <- evt
+				if e.server.onSubscribe != nil {
+					e.server.onSubscribe(
+						e.topic, evt.Decoded.Stream)
+				}
 			} else if evt.Decoded.Unsubscribe {
 				logrus.WithFields(logrus.Fields{
 					"topic":  e.topic,
 					"stream": evt.Decoded.Stream,
 				}).Trace("Server received unsubscribe")
-				send <- evt
 				e.server.Unsubscribe(e.topic, evt.Decoded.Stream, send)
+				send <- evt
+				if e.server.onUnsubscribe != nil {
+					e.server.onUnsubscribe(
+						e.topic, evt.Decoded.Stream)
+				}
 			} else {
 				logrus.WithFields(logrus.Fields{
 					"topic":  e.topic,
