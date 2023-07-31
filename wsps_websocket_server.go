@@ -129,6 +129,8 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer wsConn.Close()
+
 	// Authenticate the connection.
 	var session interface{}
 	if e.server.authentication != nil {
@@ -142,14 +144,22 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 
 	recv := make(chan *EventWrapper)
 	send := make(chan *EventWrapper)
-	errs := make(chan error)
+	recvErrs := make(chan error)
+	sendErrs := make(chan error)
 
 	ctx, cancel := context.WithCancel(r.Context())
 
-	go sendMessages(ctx, wsConn, send, errs)
-	go readMessages(e.topic, e.msgType, wsConn, recv, errs)
+	go readMessages(e.topic, e.msgType, wsConn, recv, recvErrs)
+	go sendMessages(ctx, wsConn, send, sendErrs)
+
+	recvClosed := false
+	sendClosed := false
 
 	for {
+		if recvClosed && sendClosed {
+			break
+		}
+
 		select {
 		case evt := <-recv:
 			// Authenticate the message.
@@ -190,16 +200,27 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 				}).Trace("Server received message")
 				e.server.localPubSub.publish <- evt
 			}
-		case err := <-errs:
+		case err := <-recvErrs:
 			if err != nil && !websocket.IsCloseError(err,
 				websocket.CloseGoingAway, websocket.CloseNormalClosure,
 			) {
-				logrus.WithError(err).Error("WebSocket error")
+				logrus.WithError(err).Error(
+					"WebSocket server receive error")
+				recvClosed = true
 				cancel()
-				return
 			} else if err != nil {
+				recvClosed = true
 				cancel()
-				return
+			}
+		case err := <-sendErrs:
+			if err != nil && !websocket.IsCloseError(err,
+				websocket.CloseGoingAway, websocket.CloseNormalClosure,
+			) {
+				logrus.WithError(err).Error(
+					"WebSocket server send error")
+				sendClosed = true
+			} else if err != nil {
+				sendClosed = true
 			}
 		}
 	}

@@ -71,9 +71,10 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 	// Create channels.
 	recv := make(chan *EventWrapper)
 	send := make(chan *EventWrapper)
+	recvErrs := make(chan error)
+	sendErrs := make(chan error)
 	subscribe := make(chan *subscription)
 	unsubscribe := make(chan *subscription)
-	errs := make(chan error)
 	finished := make(chan error)
 
 	// Create cancel context
@@ -110,17 +111,19 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 	}
 
 	// Run the connection.
-	go sendMessages(ctx, wsConn, send, errs)
-	go readMessages(topic, msgType, wsConn, recv, errs)
+	go readMessages(topic, msgType, wsConn, recv, recvErrs)
+	go sendMessages(ctx, wsConn, send, sendErrs)
 	go runConnection(
-		ctx,
+		wsConn,
+		cancel,
 		c.localPubSub,
 		topic,
 		recv,
 		send,
+		recvErrs,
+		sendErrs,
 		subscribe,
 		unsubscribe,
-		errs,
 		finished,
 	)
 
@@ -215,24 +218,33 @@ func (c *PubSubConnection) UnsubscribeChannel(
 
 // runConnection runs a PubSubConnection.
 func runConnection(
-	ctx context.Context,
+	wsConn *websocket.Conn,
+	cancel context.CancelFunc,
 	localPubSub *LocalPubSub,
 	topic string,
 	recv <-chan *EventWrapper,
 	send chan<- *EventWrapper,
+	recvErrs <-chan error,
+	sendErrs <-chan error,
 	subscribe <-chan *subscription,
 	unsubscribe <-chan *subscription,
-	errs <-chan error,
 	finished chan<- error,
 ) {
 	pendingSubscriptions := make(map[uuid.UUID][]*subscription)
 	pendingUnsubscriptions := make(map[uuid.UUID][]*subscription)
 
+	recvClosed := false
+	sendClosed := false
+
+	defer wsConn.Close()
+
 	for {
-		select {
-		case <-ctx.Done():
+		if recvClosed && sendClosed {
 			close(finished)
 			return
+		}
+
+		select {
 		case evt := <-recv:
 			if evt.Decoded.Subscribe {
 				subs := pendingSubscriptions[evt.Decoded.Stream]
@@ -284,12 +296,25 @@ func runConnection(
 			}
 
 			send <- wrapped
-		case err := <-errs:
+		case err := <-recvErrs:
 			if err != nil && !websocket.IsCloseError(err,
 				websocket.CloseNormalClosure, websocket.CloseGoingAway,
 			) {
-				logrus.WithError(err).Error("WebSocket client error")
-				finished <- err
+				logrus.WithError(err).Error(
+					"WebSocket client receive error")
+				recvClosed = true
+			} else {
+				recvClosed = true
+			}
+		case err := <-sendErrs:
+			if err != nil && !websocket.IsCloseError(err,
+				websocket.CloseNormalClosure, websocket.CloseGoingAway,
+			) {
+				logrus.WithError(err).Error(
+					"WebSocket client send error")
+				sendClosed = true
+			} else {
+				sendClosed = true
 			}
 		}
 	}

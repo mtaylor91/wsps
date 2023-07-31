@@ -24,7 +24,7 @@ func sendMessages(
 	send <-chan *EventWrapper,
 	errs chan<- error,
 ) {
-	defer conn.Close()
+	defer close(errs)
 
 	for {
 		select {
@@ -37,14 +37,12 @@ func sendMessages(
 					websocket.TextMessage, evt.Encoded)
 				if err != nil {
 					errs <- err
-					goto finish
 				}
 			} else {
 				// Encode and send message.
 				err := conn.WriteJSON(evt.Decoded)
 				if err != nil {
 					errs <- err
-					goto finish
 				}
 			}
 		}
@@ -64,6 +62,8 @@ func readMessages(
 	recv chan<- *EventWrapper,
 	errs chan<- error,
 ) {
+	defer close(errs)
+
 	for {
 		// Create event.
 		content := reflect.New(msgType).Interface()
