@@ -2,6 +2,7 @@ package wsps
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"reflect"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
+
+var ErrConnectionClosed = errors.New("connection closed")
 
 // PubSubClient is a websocket-based pubsub client.
 type PubSubClient struct {
@@ -145,36 +148,64 @@ func (c *PubSubConnection) Publish(streamId uuid.UUID, msg interface{}) error {
 	}
 
 	// Send the message.
-	c.publish <- wrapped
-	return nil
+	select {
+	case err := <-c.finished:
+		if err != nil {
+			return err
+		} else {
+			return ErrConnectionClosed
+		}
+	case c.publish <- wrapped:
+		return nil
+	}
 }
 
 // Subscribe subscribes to a stream on the connection's topic.
-func (c *PubSubConnection) Subscribe(stream uuid.UUID) {
+func (c *PubSubConnection) Subscribe(stream uuid.UUID) error {
 	ack := make(chan *EventWrapper)
 	c.subscribe <- &subscription{c.topic, stream, ack}
-	<-ack
+	select {
+	case err := <-c.finished:
+		if err != nil {
+			return err
+		} else {
+			return ErrConnectionClosed
+		}
+	case <-ack:
+		return nil
+	}
 }
 
 // SubscribeChannel subscribes to a stream on the connection's topic.
-func (c *PubSubConnection) SubscribeChannel(stream uuid.UUID, ch chan<- *EventWrapper) {
-	c.Subscribe(stream)
+func (c *PubSubConnection) SubscribeChannel(
+	stream uuid.UUID, ch chan<- *EventWrapper,
+) error {
 	c.client.localPubSub.SubscribeChannel(c.topic, stream, ch)
+	return c.Subscribe(stream)
 }
 
 // Unsubscribe unsubscribes from a stream on the connection's topic.
-func (c *PubSubConnection) Unsubscribe(stream uuid.UUID) {
+func (c *PubSubConnection) Unsubscribe(stream uuid.UUID) error {
 	ack := make(chan *EventWrapper)
 	c.unsubscribe <- &subscription{c.topic, stream, ack}
-	<-ack
+	select {
+	case err := <-c.finished:
+		if err != nil {
+			return err
+		} else {
+			return ErrConnectionClosed
+		}
+	case <-ack:
+		return nil
+	}
 }
 
 // UnsubscribeChannel unsubscribes from a stream on the connection's topic.
 func (c *PubSubConnection) UnsubscribeChannel(
 	stream uuid.UUID, ch chan<- *EventWrapper,
-) {
-	c.Unsubscribe(stream)
+) error {
 	c.client.localPubSub.UnsubscribeChannel(c.topic, stream, ch)
+	return c.Unsubscribe(stream)
 }
 
 // runConnection runs a PubSubConnection.
