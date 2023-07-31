@@ -125,6 +125,7 @@ func (e *PubSubEndpoint) UnsubscribeChannel(
 func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 	wsConn, err := e.upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		logrus.WithError(err).Debug("Failed to upgrade websocket")
 		return
 	}
 
@@ -133,6 +134,7 @@ func (e *PubSubEndpoint) Handler(w http.ResponseWriter, r *http.Request) {
 	if e.server.authentication != nil {
 		session, err = e.server.authentication(wsConn)
 		if err != nil {
+			logrus.WithError(err).Debug("Failed to authenticate")
 			wsConn.Close()
 			return
 		}
