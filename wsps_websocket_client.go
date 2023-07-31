@@ -92,7 +92,12 @@ func (c *PubSubClient) NewPubSubConnectionContext(
 	}
 
 	// Dial the endpoint.
-	wsConn, _, err := c.dialer.Dial(url.String(), nil)
+	wsUrl := url.String()
+	logrus.WithFields(logrus.Fields{
+		"topic": topic,
+		"url":   wsUrl,
+	}).Debug("Dialing websocket endpoint")
+	wsConn, _, err := c.dialer.Dial(wsUrl, nil)
 	if err != nil {
 		return nil, err
 	}
