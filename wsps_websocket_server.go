@@ -28,8 +28,8 @@ func NewPubSubServer(localPubSub *LocalPubSub) *PubSubServer {
 }
 
 // Publish publishes a message to a topic.
-func (s *PubSubServer) Publish(topic string, stream uuid.UUID, message interface{}) {
-	s.localPubSub.Publish(topic, stream, message)
+func (s *PubSubServer) Publish(e *Event) {
+	s.localPubSub.Publish(e)
 }
 
 // SubscribeChannel subscribes to a topic.
@@ -101,8 +101,8 @@ func (s *PubSubServer) NewPubSubEndpoint(
 }
 
 // Publish publishes a message to a stream on the endpoint's topic
-func (e *PubSubEndpoint) Publish(stream uuid.UUID, message interface{}) {
-	e.server.Publish(e.topic, stream, message)
+func (ep *PubSubEndpoint) Publish(evt *Event) {
+	ep.server.Publish(evt)
 }
 
 // SubscribeChannel subscribes to a stream on the endpoint's topic

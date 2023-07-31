@@ -136,13 +136,17 @@ func (c *PubSubConnection) Close() error {
 }
 
 // Publish publishes a message to the connection's topic.
-func (c *PubSubConnection) Publish(streamId uuid.UUID, msg interface{}) {
+func (c *PubSubConnection) Publish(streamId uuid.UUID, msg interface{}) error {
+	// Wrap the message.
+	evt := NewEvent(c.topic, streamId, msg)
+	wrapped, err := evt.Wrap()
+	if err != nil {
+		return err
+	}
+
 	// Send the message.
-	c.publish <- &EventWrapper{Decoded: &Event{
-		Topic:   c.topic,
-		Stream:  streamId,
-		Content: msg,
-	}}
+	c.publish <- wrapped
+	return nil
 }
 
 // Subscribe subscribes to a stream on the connection's topic.
@@ -223,11 +227,13 @@ func runConnection(
 			}).Trace("Client subscription request")
 			subs := pendingSubscriptions[sub.stream]
 			pendingSubscriptions[sub.stream] = append(subs, sub)
-			send <- &EventWrapper{Decoded: &Event{
-				Topic:     topic,
-				Stream:    sub.stream,
-				Subscribe: true,
-			}}
+			evt := NewSubscribeEvent(topic, sub.stream)
+			wrapped, err := evt.Wrap()
+			if err != nil {
+				panic(err)
+			}
+
+			send <- wrapped
 		case sub := <-unsubscribe:
 			logrus.WithFields(logrus.Fields{
 				"topic":  topic,
@@ -235,11 +241,13 @@ func runConnection(
 			}).Trace("Client unsubscription request")
 			subs := pendingUnsubscriptions[sub.stream]
 			pendingUnsubscriptions[sub.stream] = append(subs, sub)
-			send <- &EventWrapper{Decoded: &Event{
-				Topic:       topic,
-				Stream:      sub.stream,
-				Unsubscribe: true,
-			}}
+			evt := NewUnsubscribeEvent(topic, sub.stream)
+			wrapped, err := evt.Wrap()
+			if err != nil {
+				panic(err)
+			}
+
+			send <- wrapped
 		case err := <-errs:
 			if err != nil && !websocket.IsCloseError(err,
 				websocket.CloseNormalClosure, websocket.CloseGoingAway,

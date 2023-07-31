@@ -25,7 +25,8 @@ func TestLocalPubSub(t *testing.T) {
 	ps.SubscribeChannel("test", evtStream, ch)
 
 	// Publish an event.
-	ps.Publish("test", evtStream, TestMessage{Message: "Hello World!"})
+	evt := NewEvent("test", evtStream, TestMessage{Message: "Hello World!"})
+	ps.Publish(evt)
 
 	// Receive the event.
 	event := <-ch

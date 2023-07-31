@@ -1,8 +1,6 @@
 package wsps
 
 import (
-	"encoding/json"
-
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -107,31 +105,18 @@ func newLocalPubSubSubscription(
 	}
 }
 
-func (ps *LocalPubSub) Publish(
-	topic string,
-	stream uuid.UUID,
-	content interface{},
-) error {
-	evt := &Event{
-		Topic:   topic,
-		Stream:  stream,
-		Content: content,
-	}
+func (ps *LocalPubSub) Publish(e *Event) error {
+	logrus.WithFields(logrus.Fields{
+		"topic":  e.Topic,
+		"stream": e.Stream,
+	}).Trace("Publishing event")
 
-	data, err := json.Marshal(evt)
+	w, err := e.Wrap()
 	if err != nil {
 		return err
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"topic":  topic,
-		"stream": stream,
-	}).Trace("Publishing event")
-
-	ps.publish <- &EventWrapper{
-		Encoded: data,
-		Decoded: evt,
-	}
+	ps.publish <- w
 
 	return nil
 }

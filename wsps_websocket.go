@@ -3,7 +3,6 @@ package wsps
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"reflect"
 
 	"github.com/gorilla/websocket"
@@ -68,10 +67,7 @@ func readMessages(
 	for {
 		// Create event.
 		content := reflect.New(msgType).Interface()
-		event := Event{
-			Topic:   topic,
-			Content: content,
-		}
+		event := Event{Topic: topic, Content: content}
 
 		// Get message reader.
 		_, msgReader, err := conn.NextReader()
@@ -90,7 +86,7 @@ func readMessages(
 
 		// Decode message.
 		data := buf.Bytes()
-		err = json.Unmarshal(data, &event)
+		err = event.Decode(data)
 		if err != nil {
 			errs <- err
 			return

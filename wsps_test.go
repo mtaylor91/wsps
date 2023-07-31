@@ -13,14 +13,7 @@ type Example struct {
 }
 
 func TestDecodeInterfaceType(t *testing.T) {
-	encode := Event{
-		Topic:  "test",
-		Stream: uuid.New(),
-		Content: &Example{
-			Number: 42,
-		},
-	}
-
+	encode := NewEvent("test", uuid.New(), &Example{Number: 42})
 	encoded, err := json.Marshal(&encode)
 	assert.NoError(t, err)
 
